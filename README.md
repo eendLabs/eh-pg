@@ -1,6 +1,6 @@
-# Event Horizon PubSub
+# Event Horizon PG (Postgres)
 
-Event Horizon PubSub contains the GCP PubSub driver for [Event Horizon] a CQRS/ES toolkit for Go.
+Event Horizon PubSub contains the Postgres driver for [Event Horizon] a CQRS/ES toolkit for Go.
 
 [Event Horizon]: https://github.com/looplab/eventhorizon
 
@@ -10,7 +10,7 @@ See the Event Horizon example folder for a few examples to get you started and r
 
 ## Development
 
-To develop Event Horizon PubSub you need to have Docker and Docker Compose installed.
+To develop Event Horizon PG you need to have Docker and Docker Compose installed.
 
 To start all needed services and run all tests, simply run make:
 
