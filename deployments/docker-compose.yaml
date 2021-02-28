@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  app:
+    image: eendlabs/eh-pg
+    build:
+      context: ../
+      dockerfile: ./build/package/app/Dockerfile
+    depends_on:
+      - postgres
+    environment:
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "test_db"
+      POSTGRES_USER: "postgres"
+      POSTGRES_ADDR: "postgres:5432"
+    volumes:
+      - ../:/eventhorizon
+    working_dir: /eventhorizon
+
+  postgres:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+          - ../configs/postgres.conf:/etc/postgresql/postgresql.conf
+          - ../scripts/init.sql:/docker-entrypoint-initdb.d/schema.sql
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    restart: always
+    ports:
+      - "5432:5432"
