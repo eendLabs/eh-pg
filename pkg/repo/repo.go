@@ -29,11 +29,11 @@ var ErrNoDBClient = errors.New("no database client")
 var ErrModelNotSet = errors.New("model not set")
 
 type DBConfig struct {
-	Host     string
-	Port     int
-	Database string
-	User     string
-	Password string
+	Host     string `json:"POSTGRES_HOST,omitempty"`
+	Port     int    `json:"POSTGRES_PORT,omitempty"`
+	Database string `json:"POSTGRES_DB,omitempty"`
+	User     string `json:"POSTGRES_USER,omitempty"`
+	Password string `json:"POSTGRES_PASSWORD,omitempty"`
 }
 
 func (d DBConfig) getConnString() string {
