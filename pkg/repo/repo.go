@@ -8,12 +8,12 @@ import (
 	"log"
 	"os"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/reflectx"
 	_ "github.com/lib/pq"
 	eh "github.com/looplab/eventhorizon"
 )
@@ -110,7 +110,7 @@ func NewRepo(config *Config) (*Repo, error) {
 	config.provideDefaults()
 
 	client, err := sqlx.Connect("postgres",
-		config.DbConfig.getConnString())
+		config.DbConfig.GetConnString())
 	if err != nil {
 		return nil, eh.RepoError{
 			Err:     ErrCouldNotDialDB,
@@ -234,15 +234,6 @@ func (r *Repo) FindWithFilterUsingIndex(ctx context.Context,
 	return nil, nil
 }
 
-var matchFirstCap = regexp.MustCompile("(.)([A-Z][a-z]+)")
-var matchAllCap = regexp.MustCompile("([a-z0-9])([A-Z])")
-
-func ToSnakeCase(str string) string {
-	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
-	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
-	return strings.ToLower(snake)
-}
-
 // Save implements the Save method of the eventhorizon.WriteRepo interface.
 func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 
@@ -254,26 +245,38 @@ func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 		}
 	}
 
-	fields := reflect.Indirect(reflect.ValueOf(entity))
-	mapFields := make([]string, fields.NumField())
-	excludedFields := make([]string, fields.NumField())
-	for i := range make([]int, fields.NumField()) {
-		snakeField := ToSnakeCase(fields.Type().Field(i).Name)
-		mapFields[i] = snakeField
-		excludedFields[i] = fmt.Sprintf("%s = EXCLUDED.%s", snakeField,
-			snakeField)
+	mapper := reflectx.NewMapper("db")
+	fields := mapper.FieldMap(reflect.Indirect(reflect.ValueOf(entity)))
+	var mapFields, excludedFields []string
+	mapValues := make(map[string]interface{})
+
+	for field, v := range fields {
+		mapFields = append(mapFields, field)
+
+		// getting type from reflect.Value
+		vi := v.Interface()
+		switch x := vi.(type) {
+		default:
+			mapValues[field] = x
+		}
+		excludedFields = append(excludedFields,
+			fmt.Sprintf("%s = EXCLUDED.%s", field, field))
+
 	}
 
-	joinedFields2 := ":" + strings.Join(mapFields, ",:")
-	joinedFieldsExcluded := strings.Join(excludedFields, ",")
+	joinedFields := strings.Join(mapFields, ", ")
+	joinedFieldsBindVar := ":" + strings.Join(mapFields, ", :")
+	joinedFieldsExcluded := strings.Join(excludedFields, ", ")
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) "+
+		"ON CONFLICT (id) DO UPDATE SET %s;",
+		r.config.TableName, joinedFields, joinedFieldsBindVar,
+		joinedFieldsExcluded)
+	log.Println(query)
 
 	if w, err := r.client.
 		NamedExecContext(ctx,
-			fmt.Sprintf("INSERT INTO %s VALUES (%s) "+
-				"ON CONFLICT (id) DO UPDATE SET %s;",
-				r.config.TableName, joinedFields2,
-				joinedFieldsExcluded),
-			entity); err != nil {
+			query,
+			mapValues); err != nil {
 		return eh.RepoError{
 			Err:       eh.ErrCouldNotSaveEntity,
 			BaseErr:   err,
