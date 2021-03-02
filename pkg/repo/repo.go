@@ -36,7 +36,12 @@ type DBConfig struct {
 	Password string `json:"POSTGRES_PASSWORD,omitempty"`
 }
 
-func (d DBConfig) getConnString() string {
+func (d DBConfig) GetConnString() string {
+	if d.Database == "" {
+		return fmt.Sprintf("host=%s port=%d user=%s "+
+			"password=%s sslmode=disable timezone=UCT",
+			d.Host, d.Port, d.User, d.Password)
+	}
 	return fmt.Sprintf("host=%s port=%d user=%s "+
 		"password=%s dbname=%s sslmode=disable timezone=UCT",
 		d.Host, d.Port, d.User, d.Password, d.Database)

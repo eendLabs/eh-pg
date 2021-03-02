@@ -18,7 +18,7 @@ func TestReadRepoIntegration(t *testing.T) {
 	config.provideDefaults()
 	config.TableName = "models"
 	client, err := sqlx.Connect("postgres",
-		config.DbConfig.getConnString())
+		config.DbConfig.GetConnString())
 	if err != nil {
 		t.Fatal(err)
 	}
