@@ -2,14 +2,20 @@ package repo
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"github.com/go-pg/pg/v10"
-	"github.com/google/uuid"
-	eh "github.com/looplab/eventhorizon"
-	"github.com/looplab/eventhorizon/mocks"
+	"fmt"
 	"log"
 	"os"
-	"time"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	eh "github.com/looplab/eventhorizon"
 )
 
 var ErrCouldNotDialDB = errors.New("could not dial database")
@@ -22,41 +28,75 @@ var ErrNoDBClient = errors.New("no database client")
 // ErrModelNotSet is when an model factory is not set on the Repo.
 var ErrModelNotSet = errors.New("model not set")
 
-type Config struct {
-	Addr     string
+type DBConfig struct {
+	Host     string
+	Port     int
 	Database string
 	User     string
 	Password string
 }
 
+func (d DBConfig) getConnString() string {
+	return fmt.Sprintf("host=%s port=%d user=%s "+
+		"password=%s dbname=%s sslmode=disable timezone=UCT",
+		d.Host, d.Port, d.User, d.Password, d.Database)
+}
+
+type Config struct {
+	TableName string
+	dbName    func(ctx context.Context) string
+	dbConfig  *DBConfig
+}
+
 func (c *Config) provideDefaults() {
-	if c.Addr == "" {
-		c.Addr = os.Getenv("POSTGRES_ADDR")
-	}
-	if c.Database == "" {
-		c.Database = os.Getenv("POSTGRES_DB")
-	}
-	if c.User == "" {
-		c.User = os.Getenv("POSTGRES_USER")
-	}
-	if c.Password == "" {
-		c.Password = os.Getenv("POSTGRES_PASSWORD")
-	}
-}
+	c.dbConfig = &DBConfig{}
+	if c.dbConfig.Host == "" {
+		if host := os.Getenv("POSTGRES_HOST"); host == "" {
+			c.dbConfig.Host = "localhost"
+		} else {
+			c.dbConfig.Host = host
+		}
 
-type IModel struct {
-	ID        uuid.UUID `pg:"id,type:uuid,pk"`
-	Version   int       `pg:"version"`
-	Content   string    `pg:"content,type:varchar(250)"`
-	CreatedAt time.Time `pg:"created_at,type:timestamp"`
-}
-
-func(i IModel)   EntityID() uuid.UUID {
-	return i.ID
+	}
+	if c.dbConfig.Port == 0 {
+		defaultPort := 5432
+		if port := os.Getenv("POSTGRES_PORT"); port == "" {
+			c.dbConfig.Port = defaultPort
+		} else {
+			if p, err := strconv.Atoi(port); p == 0 {
+				c.dbConfig.Port = defaultPort
+			} else if err != nil {
+				log.Fatalf("could not cast port: %v", err)
+			} else {
+				c.dbConfig.Port = p
+			}
+		}
+	}
+	if c.dbConfig.Database == "" {
+		if db := os.Getenv("POSTGRES_DB"); db == "" {
+			c.dbConfig.Database = "postgres"
+		} else {
+			c.dbConfig.Database = db
+		}
+	}
+	if c.dbConfig.User == "" {
+		if user := os.Getenv("POSTGRES_USER"); user == "" {
+			c.dbConfig.User = "postgres"
+		} else {
+			c.dbConfig.User = user
+		}
+	}
+	if c.dbConfig.Password == "" {
+		if pwd := os.Getenv("POSTGRES_PASSWORD"); pwd == "" {
+			c.dbConfig.Password = "postgres"
+		} else {
+			c.dbConfig.Password = pwd
+		}
+	}
 }
 
 type Repo struct {
-	client    *pg.DB
+	client    *sqlx.DB
 	config    *Config
 	factoryFn func() eh.Entity
 }
@@ -64,17 +104,19 @@ type Repo struct {
 func NewRepo(config *Config) (*Repo, error) {
 	config.provideDefaults()
 
-	client := pg.Connect(&pg.Options{
-		Addr:     config.Addr,
-		Database: config.Database,
-		User:     config.User,
-		Password: config.Password,
-	})
-	return NewRepoWithClient(config, client)
+	client, err := sqlx.Connect("postgres",
+		config.dbConfig.getConnString())
+	if err != nil {
+		return nil, eh.RepoError{
+			Err:     ErrCouldNotDialDB,
+			BaseErr: err,
+		}
+	}
 
+	return NewRepoWithClient(config, client)
 }
 
-func NewRepoWithClient(config *Config, client *pg.DB) (*Repo, error) {
+func NewRepoWithClient(config *Config, client *sqlx.DB) (*Repo, error) {
 	if client == nil {
 		return nil, ErrNoDBClient
 	}
@@ -82,6 +124,11 @@ func NewRepoWithClient(config *Config, client *pg.DB) (*Repo, error) {
 	r := &Repo{
 		client: client,
 		config: config,
+	}
+
+	r.config.dbName = func(ctx context.Context) string {
+		ns := eh.NamespaceFromContext(ctx)
+		return r.config.TableName + "_" + ns
 	}
 
 	return r, nil
@@ -102,13 +149,9 @@ func (r *Repo) Find(ctx context.Context, id uuid.UUID) (eh.Entity, error) {
 		}
 	}
 	entity := r.factoryFn()
-	err := r.client.
-		//WithParam("namespace", ns).
-		WithContext(ctx).
-		Model(entity).
-		Where("id = ?", id).
-		Column("*").
-		Select(entity)
+	err := r.client.GetContext(ctx, entity,
+		fmt.Sprintf("SELECT * FROM %s WHERE id=$1",
+			r.config.TableName), id.String())
 
 	if err != nil {
 		return nil, eh.RepoError{
@@ -119,13 +162,6 @@ func (r *Repo) Find(ctx context.Context, id uuid.UUID) (eh.Entity, error) {
 	}
 
 	return entity, nil
-}
-
-type X struct {
-	mocks.Model
-}
-func (c X)  EntityID() uuid.UUID {
-	return c.ID
 }
 
 // FindAll implements the FindAll method of the eventhorizon.ReadRepo interface.
@@ -141,19 +177,19 @@ func (r *Repo) FindAll(ctx context.Context) ([]eh.Entity, error) {
 	var result []eh.Entity
 	entity := r.factoryFn()
 
-	err := r.client.
-		//f func() eh.Entity
-		//WithParam("namespace", ns).
-		WithContext(ctx).
-		Model(entity).
-		ForEach(func(*eh.Entity) func(e X) error {
+	rows, err := r.client.
+		QueryxContext(ctx,
+			fmt.Sprintf("SELECT * FROM %s", r.config.TableName))
 
-			return func(e X) error {
-				result = append(result, e)
-				return nil
+	if rows != nil {
+		for rows.Next() {
+			if err := rows.StructScan(entity); err != nil {
+				return nil, err
 			}
-
-		}(&entity))
+			result = append(result, entity)
+			entity = r.factoryFn()
+		}
+	}
 
 	if err != nil {
 		return nil, eh.RepoError{
@@ -167,7 +203,8 @@ func (r *Repo) FindAll(ctx context.Context) ([]eh.Entity, error) {
 }
 
 // FindWithFilter allows to find entities with a filter
-func (r *Repo) FindWithFilter(ctx context.Context, expr string, args ...interface{}) ([]eh.Entity, error) {
+func (r *Repo) FindWithFilter(ctx context.Context, expr string,
+	args ...interface{}) ([]eh.Entity, error) {
 	if r.factoryFn == nil {
 		return nil, eh.RepoError{
 			Err:       ErrModelNotSet,
@@ -179,7 +216,9 @@ func (r *Repo) FindWithFilter(ctx context.Context, expr string, args ...interfac
 }
 
 // FindWithFilterUsingIndex allows to find entities with a filter using an index
-func (r *Repo) FindWithFilterUsingIndex(ctx context.Context, indexInput IndexInput, filterQuery string, filterArgs ...interface{}) ([]eh.Entity, error) {
+func (r *Repo) FindWithFilterUsingIndex(ctx context.Context,
+	indexInput IndexInput, filterQuery string,
+	filterArgs ...interface{}) ([]eh.Entity, error) {
 	if r.factoryFn == nil {
 		return nil, eh.RepoError{
 			Err:       ErrModelNotSet,
@@ -188,6 +227,15 @@ func (r *Repo) FindWithFilterUsingIndex(ctx context.Context, indexInput IndexInp
 	}
 
 	return nil, nil
+}
+
+var matchFirstCap = regexp.MustCompile("(.)([A-Z][a-z]+)")
+var matchAllCap = regexp.MustCompile("([a-z0-9])([A-Z])")
+
+func ToSnakeCase(str string) string {
+	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
+	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
+	return strings.ToLower(snake)
 }
 
 // Save implements the Save method of the eventhorizon.WriteRepo interface.
@@ -201,45 +249,41 @@ func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 		}
 	}
 
-	fromDB := r.factoryFn()
-	_ = r.client.
-		Model(fromDB).
-		Where("id = ?", entity.EntityID()).
-		Select()
-
-	if fromDB.EntityID() == entity.EntityID() {
-		result, err := r.client.
-			Model(entity).
-			Where("id = ?", entity.EntityID()).
-			Update()
-		if err != nil {
-			return eh.RepoError{
-				Err:       eh.ErrCouldNotSaveEntity,
-				BaseErr:   err,
-				Namespace: eh.NamespaceFromContext(ctx),
-			}
-		}
-		if result != nil && result.RowsAffected() != 1 {
-			return eh.RepoError{
-				Err:       eh.ErrCouldNotSaveEntity,
-				BaseErr:   err,
-				Namespace: eh.NamespaceFromContext(ctx),
-			}
-		}
-
-		return nil
+	fields := reflect.Indirect(reflect.ValueOf(entity))
+	mapFields := make([]string, fields.NumField())
+	excludedFields := make([]string, fields.NumField())
+	for i := range make([]int, fields.NumField()) {
+		snakeField := ToSnakeCase(fields.Type().Field(i).Name)
+		mapFields[i] = snakeField
+		excludedFields[i] = fmt.Sprintf("%s = EXCLUDED.%s", snakeField,
+			snakeField)
 	}
 
-	if _, err := r.client.
-		Model(entity).
-		//OnConflict("(id) DO UPDATE").
-		//Set("title = EXCLUDED.title").
-		Insert(); err != nil {
+	joinedFields2 := ":" + strings.Join(mapFields, ",:")
+	joinedFieldsExcluded := strings.Join(excludedFields, ",")
+
+	if w, err := r.client.
+		NamedExecContext(ctx,
+			fmt.Sprintf("INSERT INTO %s VALUES (%s) "+
+				"ON CONFLICT (id) DO UPDATE SET %s;",
+				r.config.TableName, joinedFields2,
+				joinedFieldsExcluded),
+			entity); err != nil {
 		return eh.RepoError{
 			Err:       eh.ErrCouldNotSaveEntity,
 			BaseErr:   err,
 			Namespace: eh.NamespaceFromContext(ctx),
 		}
+	} else {
+		affected, err := w.RowsAffected()
+		if err != nil || affected != 1 {
+			return eh.RepoError{
+				Err:       eh.ErrCouldNotSaveEntity,
+				BaseErr:   err,
+				Namespace: eh.NamespaceFromContext(ctx),
+			}
+		}
+
 	}
 
 	return nil
@@ -247,17 +291,9 @@ func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 
 // Remove implements the Remove method of the eventhorizon.WriteRepo interface.
 func (r *Repo) Remove(ctx context.Context, id uuid.UUID) error {
-	if r.factoryFn == nil {
-		return eh.RepoError{
-			Err:       ErrModelNotSet,
-			Namespace: eh.NamespaceFromContext(ctx),
-		}
-	}
-	entity := r.factoryFn()
-	w, err := r.client.
-		Model(entity).
-		Where("id = ?", id).
-		Delete()
+	w, err := r.client.ExecContext(ctx,
+		fmt.Sprintf("DELETE FROM %s WHERE id = $1",
+			r.config.TableName), id)
 	if err != nil {
 		return eh.RepoError{
 			Err:       eh.ErrCouldNotRemoveEntity,
@@ -265,7 +301,8 @@ func (r *Repo) Remove(ctx context.Context, id uuid.UUID) error {
 			Namespace: eh.NamespaceFromContext(ctx),
 		}
 	}
-	if w != nil && w.RowsAffected() != 1 {
+	affected, err := w.RowsAffected()
+	if w != nil && affected != 1 {
 		return eh.RepoError{
 			Err:       eh.ErrEntityNotFound,
 			BaseErr:   err,
@@ -292,11 +329,9 @@ type IndexInput struct {
 
 // Clear clears the read model database.
 func (r *Repo) Clear(ctx context.Context) error {
-	entity := r.factoryFn()
-	if _, err := r.client.WithContext(ctx).
-		Model(entity).
-		WherePK().
-		Delete(); err != nil {
+	tx := r.client.MustBeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelDefault})
+	tx.MustExec(fmt.Sprintf("delete from %s", r.config.TableName))
+	if err := tx.Commit(); err != nil {
 		return eh.RepoError{
 			Err:       ErrCouldNotClearDB,
 			BaseErr:   err,

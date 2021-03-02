@@ -1,15 +1,14 @@
-
 package repo
 
 import (
 	"context"
+	"github.com/eendLabs/eh-pg/pkg/mocks"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	eh "github.com/looplab/eventhorizon"
-	"github.com/looplab/eventhorizon/mocks"
 )
 
 // AcceptanceTest is the acceptance test that all implementations of Repo
@@ -22,9 +21,9 @@ import (
 //       repo.AcceptanceTest(t, ctx, store)
 //   }
 //
-func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
+func AcceptanceTest(t *testing.T, ctx context.Context, r eh.ReadWriteRepo) {
 	// Find non-existing item.
-	entity, err := repo.Find(ctx, uuid.New())
+	entity, err := r.Find(ctx, uuid.New())
 	if rrErr, ok := err.(eh.RepoError); !ok || rrErr.Err != eh.ErrEntityNotFound {
 		t.Error("there should be a ErrEntityNotFound error:", err)
 	}
@@ -33,7 +32,7 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 	}
 
 	// FindAll with no items.
-	result, err := repo.FindAll(ctx)
+	result, err := r.FindAll(ctx)
 	if err != nil {
 		t.Error("there should be no error:", err)
 	}
@@ -44,9 +43,9 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 	// Save model without ID.
 	entityMissingID := &mocks.Model{
 		Content:   "entity1",
-		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.FixedZone("", 0)),
 	}
-	err = repo.Save(ctx, entityMissingID)
+	err = r.Save(ctx, entityMissingID)
 	if rrErr, ok := err.(eh.RepoError); !ok || rrErr.BaseErr != eh.ErrMissingEntityID {
 		t.Error("there should be a ErrMissingEntityID error:", err)
 	}
@@ -55,12 +54,12 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 	entity1 := &mocks.Model{
 		ID:        uuid.New(),
 		Content:   "entity1",
-		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.FixedZone("", 0)),
 	}
-	if err = repo.Save(ctx, entity1); err != nil {
+	if err = r.Save(ctx, entity1); err != nil {
 		t.Error("there should be no error:", err)
 	}
-	entity, err = repo.Find(ctx, entity1.ID)
+	entity, err = r.Find(ctx, entity1.ID)
 	if err != nil {
 		t.Error("there should be no error:", err)
 	}
@@ -69,28 +68,27 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 	}
 
 	// FindAll with one item.
-	result, err = repo.FindAll(ctx)
+	result, err = r.FindAll(ctx)
 	if err != nil {
 		t.Error("there should be no error:", err)
 	}
 	if len(result) != 1 {
 		t.Error("there should be one item:", len(result))
 	}
-	// TODO: check this later
-	//if !reflect.DeepEqual(result, []eh.Entity{entity1}) {
-	//	t.Error("the item should be correct:", entity1)
-	//}
+	if !reflect.DeepEqual(result, []eh.Entity{entity1}) {
+		t.Error("the item should be correct:", entity1)
+	}
 
 	// Save and overwrite with same ID.
 	entity1Alt := &mocks.Model{
 		ID:        entity1.ID,
 		Content:   "entity1Alt",
-		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.FixedZone("", 0)),
 	}
-	if err = repo.Save(ctx, entity1Alt); err != nil {
+	if err = r.Save(ctx, entity1Alt); err != nil {
 		t.Error("there should be no error:", err)
 	}
-	entity, err = repo.Find(ctx, entity1Alt.ID)
+	entity, err = r.Find(ctx, entity1Alt.ID)
 	if err != nil {
 		t.Error("there should be no error:", err)
 	}
@@ -102,12 +100,12 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 	entity2 := &mocks.Model{
 		ID:        uuid.New(),
 		Content:   "entity2",
-		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.FixedZone("", 0)),
 	}
-	if err = repo.Save(ctx, entity2); err != nil {
+	if err = r.Save(ctx, entity2); err != nil {
 		t.Error("there should be no error:", err)
 	}
-	entity, err = repo.Find(ctx, entity2.ID)
+	entity, err = r.Find(ctx, entity2.ID)
 	if err != nil {
 		t.Error("there should be no error:", err)
 	}
@@ -116,7 +114,7 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 	}
 
 	// FindAll with two items, order should be preserved from insert.
-	result, err = repo.FindAll(ctx)
+	result, err = r.FindAll(ctx)
 	if err != nil {
 		t.Error("there should be no error:", err)
 	}
@@ -124,17 +122,16 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 		t.Error("there should be two items:", len(result))
 	}
 	// Retrieval in any order is accepted.
-	// TODO: review this later
-	//if !reflect.DeepEqual(result, []eh.Entity{entity1Alt, entity2}) &&
-	//	!reflect.DeepEqual(result, []eh.Entity{entity2, entity1Alt}) {
-	//	t.Error("the items should be correct:", result)
-	//}
+	if !reflect.DeepEqual(result, []eh.Entity{entity1Alt, entity2}) &&
+		!reflect.DeepEqual(result, []eh.Entity{entity2, entity1Alt}) {
+		t.Error("the items should be correct:", result)
+	}
 
 	// Remove item.
-	if err := repo.Remove(ctx, entity1Alt.ID); err != nil {
+	if err := r.Remove(ctx, entity1Alt.ID); err != nil {
 		t.Error("there should be no error:", err)
 	}
-	entity, err = repo.Find(ctx, entity1Alt.ID)
+	entity, err = r.Find(ctx, entity1Alt.ID)
 	if rrErr, ok := err.(eh.RepoError); !ok || rrErr.Err != eh.ErrEntityNotFound {
 		t.Error("there should be a ErrEntityNotFound error:", err)
 	}
@@ -143,7 +140,7 @@ func AcceptanceTest(t *testing.T, ctx context.Context, repo eh.ReadWriteRepo) {
 	}
 
 	// Remove non-existing item.
-	err = repo.Remove(ctx, entity1Alt.ID)
+	err = r.Remove(ctx, entity1Alt.ID)
 	if rrErr, ok := err.(eh.RepoError); !ok || rrErr.Err != eh.ErrEntityNotFound {
 		t.Error("there should be a ErrEntityNotFound error:", err)
 	}

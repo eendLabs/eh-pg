@@ -2,40 +2,12 @@ package repo
 
 import (
 	"context"
-	"github.com/go-pg/pg/v10"
-	"github.com/go-pg/pg/v10/orm"
-	"github.com/google/uuid"
+	"github.com/eendLabs/eh-pg/pkg/mocks"
+	"github.com/jmoiron/sqlx"
 	eh "github.com/looplab/eventhorizon"
-	"github.com/looplab/eventhorizon/mocks"
+	ehmocks "github.com/looplab/eventhorizon/mocks"
 	"testing"
-	"time"
 )
-
-// Model is a mocked read model, useful in testing.
-type Model struct {
-	ID        uuid.UUID `pg:"id,type:uuid,pk"`
-	Version   int       `pg:"version"`
-	Content   string    `pg:"content,type:varchar(250)"`
-	CreatedAt time.Time `pg:"created_at,type:timestamp"`
-}
-
-// createSchema creates database schema for User and Story models.
-func createSchema(db *pg.DB) error {
-	models := []interface{}{
-		(*Model)(nil),
-	}
-
-	for _, model := range models {
-		err := db.Model(model).CreateTable(&orm.CreateTableOptions{
-			Temp: true,
-			IfNotExists: true,
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func TestReadRepoIntegration(t *testing.T) {
 	if testing.Short() {
@@ -44,18 +16,27 @@ func TestReadRepoIntegration(t *testing.T) {
 
 	config := &Config{}
 	config.provideDefaults()
-	db := pg.Connect(&pg.Options{
-		Addr:     config.Addr,
-		Database: config.Database,
-		User:     config.User,
-		Password: config.Password,
-	})
-
-	if err := createSchema(db); err != nil{
-		t.Fatalf("cannot create table %v", err)
+	config.TableName = "models"
+	client, err := sqlx.Connect("postgres",
+		config.dbConfig.getConnString())
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	r, err := NewRepoWithClient(config, db)
+	var schema = `
+	DROP TABLE IF EXISTS models;
+	CREATE TABLE models (
+	    id uuid primary key,
+	    version integer,
+	    content text,
+	    created_at timestamp
+	)
+	`
+
+	ctx := context.Background()
+	client.MustExecContext(ctx, schema)
+
+	r, err := NewRepoWithClient(config, client)
 	if err != nil {
 		t.Error("there should be no error:", err)
 	}
@@ -64,17 +45,17 @@ func TestReadRepoIntegration(t *testing.T) {
 	}
 
 	r.SetEntityFactory(func() eh.Entity {
-		return &mocks.Model{}
+		return &mocks.Model{} //&mocks.Model{}
 	})
 	if r.Parent() != nil {
 		t.Error("the parent repo should be nil")
 	}
 
-	customNamespaceCtx := eh.NewContextWithNamespace(context.Background(), "ns")
+	customNamespaceCtx := eh.NewContextWithNamespace(ctx, "ns")
 
-	defer r.Close(context.Background())
+	defer r.Close(ctx)
 	defer func() {
-		if err = r.Clear(context.Background()); err != nil {
+		if err = r.Clear(ctx); err != nil {
 			t.Fatal("there should be no error:", err)
 		}
 		if err = r.Clear(customNamespaceCtx); err != nil {
@@ -186,7 +167,7 @@ func TestRepository(t *testing.T) {
 		t.Error("the parent repository should be nil:", r)
 	}
 
-	inner := &mocks.Repo{}
+	inner := &ehmocks.Repo{}
 	if r := Repository(inner); r != nil {
 		t.Error("the parent repository should be nil:", r)
 	}
@@ -199,7 +180,7 @@ func TestRepository(t *testing.T) {
 	}
 	defer r.Close(context.Background())
 
-	outer := &mocks.Repo{ParentRepo: r}
+	outer := &ehmocks.Repo{ParentRepo: r}
 	if r := Repository(outer); r != r {
 		t.Error("the parent repository should be correct:", r)
 	}
