@@ -45,52 +45,52 @@ func (d DBConfig) getConnString() string {
 type Config struct {
 	TableName string
 	dbName    func(ctx context.Context) string
-	dbConfig  *DBConfig
+	DbConfig  *DBConfig
 }
 
 func (c *Config) provideDefaults() {
-	c.dbConfig = &DBConfig{}
-	if c.dbConfig.Host == "" {
+	c.DbConfig = &DBConfig{}
+	if c.DbConfig.Host == "" {
 		if host := os.Getenv("POSTGRES_HOST"); host == "" {
-			c.dbConfig.Host = "localhost"
+			c.DbConfig.Host = "localhost"
 		} else {
-			c.dbConfig.Host = host
+			c.DbConfig.Host = host
 		}
 
 	}
-	if c.dbConfig.Port == 0 {
+	if c.DbConfig.Port == 0 {
 		defaultPort := 5432
 		if port := os.Getenv("POSTGRES_PORT"); port == "" {
-			c.dbConfig.Port = defaultPort
+			c.DbConfig.Port = defaultPort
 		} else {
 			if p, err := strconv.Atoi(port); p == 0 {
-				c.dbConfig.Port = defaultPort
+				c.DbConfig.Port = defaultPort
 			} else if err != nil {
 				log.Fatalf("could not cast port: %v", err)
 			} else {
-				c.dbConfig.Port = p
+				c.DbConfig.Port = p
 			}
 		}
 	}
-	if c.dbConfig.Database == "" {
+	if c.DbConfig.Database == "" {
 		if db := os.Getenv("POSTGRES_DB"); db == "" {
-			c.dbConfig.Database = "postgres"
+			c.DbConfig.Database = "postgres"
 		} else {
-			c.dbConfig.Database = db
+			c.DbConfig.Database = db
 		}
 	}
-	if c.dbConfig.User == "" {
+	if c.DbConfig.User == "" {
 		if user := os.Getenv("POSTGRES_USER"); user == "" {
-			c.dbConfig.User = "postgres"
+			c.DbConfig.User = "postgres"
 		} else {
-			c.dbConfig.User = user
+			c.DbConfig.User = user
 		}
 	}
-	if c.dbConfig.Password == "" {
+	if c.DbConfig.Password == "" {
 		if pwd := os.Getenv("POSTGRES_PASSWORD"); pwd == "" {
-			c.dbConfig.Password = "postgres"
+			c.DbConfig.Password = "postgres"
 		} else {
-			c.dbConfig.Password = pwd
+			c.DbConfig.Password = pwd
 		}
 	}
 }
@@ -105,7 +105,7 @@ func NewRepo(config *Config) (*Repo, error) {
 	config.provideDefaults()
 
 	client, err := sqlx.Connect("postgres",
-		config.dbConfig.getConnString())
+		config.DbConfig.getConnString())
 	if err != nil {
 		return nil, eh.RepoError{
 			Err:     ErrCouldNotDialDB,
