@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -272,6 +273,8 @@ func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 		r.config.TableName, joinedFields, joinedFieldsBindVar,
 		joinedFieldsExcluded)
 	log.Println(query)
+	marshal, _ := json.Marshal(mapValues)
+	log.Println("marshalledValues: %w", marshal)
 
 	if w, err := r.client.
 		NamedExecContext(ctx,
@@ -283,6 +286,7 @@ func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 			Namespace: eh.NamespaceFromContext(ctx),
 		}
 	} else {
+		fmt.Printf("conn: %s", r.config.DbConfig.GetConnString())
 		affected, err := w.RowsAffected()
 		if err != nil || affected != 1 {
 			return eh.RepoError{
@@ -291,6 +295,7 @@ func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 				Namespace: eh.NamespaceFromContext(ctx),
 			}
 		}
+		fmt.Printf("affected rows: %d", affected)
 
 	}
 
