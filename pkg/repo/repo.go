@@ -274,30 +274,29 @@ func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
 		joinedFieldsExcluded)
 	log.Println(query)
 	marshal, _ := json.Marshal(mapValues)
-	log.Println("marshalledValues: %w", marshal)
+	log.Println("marshalledValues: %w", string(marshal))
+	fmt.Printf("conn: %s", r.config.DbConfig.GetConnString())
 
-	if w, err := r.client.
-		NamedExecContext(ctx,
-			query,
-			mapValues); err != nil {
+	w, err := r.client.NamedExecContext(ctx, query, mapValues)
+	if err != nil {
+		fmt.Printf("error: %v", err)
 		return eh.RepoError{
 			Err:       eh.ErrCouldNotSaveEntity,
 			BaseErr:   err,
 			Namespace: eh.NamespaceFromContext(ctx),
 		}
-	} else {
-		fmt.Printf("conn: %s", r.config.DbConfig.GetConnString())
-		affected, err := w.RowsAffected()
-		if err != nil || affected != 1 {
-			return eh.RepoError{
-				Err:       eh.ErrCouldNotSaveEntity,
-				BaseErr:   err,
-				Namespace: eh.NamespaceFromContext(ctx),
-			}
-		}
-		fmt.Printf("affected rows: %d", affected)
-
 	}
+
+	affected, err := w.RowsAffected()
+	if err != nil || affected != 1 {
+		fmt.Printf("error: %v", err)
+		return eh.RepoError{
+			Err:       eh.ErrCouldNotSaveEntity,
+			BaseErr:   err,
+			Namespace: eh.NamespaceFromContext(ctx),
+		}
+	}
+	fmt.Printf("affected rows: %d", affected)
 
 	return nil
 }
