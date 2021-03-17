@@ -62,7 +62,6 @@ func (c *Config) provideDefaults() {
 		} else {
 			c.DbConfig.Host = host
 		}
-
 	}
 	if c.DbConfig.Port == 0 {
 		defaultPort := 5432
@@ -155,10 +154,12 @@ func (r *Repo) Find(ctx context.Context, id uuid.UUID) (eh.Entity, error) {
 		}
 	}
 	entity := r.factoryFn()
+	query := fmt.Sprintf("SELECT * FROM %s WHERE id=$1",
+		r.config.TableName)
+	fmt.Println(query)
+	fmt.Printf("id %s", id.String())
 	err := r.client.GetContext(ctx, entity,
-		fmt.Sprintf("SELECT * FROM %s WHERE id=$1",
-			r.config.TableName), id.String())
-
+		query, id.String())
 	if err != nil {
 		return nil, eh.RepoError{
 			Err:       eh.ErrEntityNotFound,
@@ -237,7 +238,6 @@ func (r *Repo) FindWithFilterUsingIndex(ctx context.Context,
 
 // Save implements the Save method of the eventhorizon.WriteRepo interface.
 func (r *Repo) Save(ctx context.Context, entity eh.Entity) error {
-
 	if entity.EntityID() == uuid.Nil {
 		return eh.RepoError{
 			Err:       eh.ErrCouldNotSaveEntity,
@@ -358,7 +358,6 @@ func (r *Repo) Close(_ context.Context) {
 	if err := r.client.Close(); err != nil {
 		log.Fatalf("cannot close db %v", err)
 	}
-
 }
 
 // Repository returns a parent ReadRepo if there is one.
