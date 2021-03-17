@@ -157,7 +157,7 @@ func (r *Repo) Find(ctx context.Context, id uuid.UUID) (eh.Entity, error) {
 	query := fmt.Sprintf("SELECT * FROM %s WHERE id=$1",
 		r.config.TableName)
 	fmt.Println(query)
-	fmt.Printf("id %s", id.String())
+	fmt.Println("id", id.String())
 	err := r.client.GetContext(ctx, entity,
 		query, id.String())
 	if err != nil {
